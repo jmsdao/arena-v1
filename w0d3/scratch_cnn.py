@@ -1,8 +1,9 @@
+from typing import Union, Tuple, Optional
+
 import torch as t
 from torch import nn
 from einops import rearrange
 from fancy_einsum import einsum
-from typing import Union, Tuple, Optional
 
 IntOrPair = Union[int, Tuple[int, int]]
 Pair = Tuple[int, int]
@@ -36,7 +37,10 @@ def pad2d(x: t.Tensor, left: int, right: int, top: int, bottom: int, pad_value: 
     return x_padded
 
 
-def maxpool2d(x: t.Tensor, kernel_size: IntOrPair, stride: Optional[IntOrPair] = None, padding: IntOrPair = 0
+def maxpool2d(x: t.Tensor,
+    kernel_size: IntOrPair,
+    stride: Optional[IntOrPair] = None,
+    padding: IntOrPair = 0
 ) -> t.Tensor:
     '''Like PyTorch's maxpool2d.
 
@@ -51,14 +55,16 @@ def maxpool2d(x: t.Tensor, kernel_size: IntOrPair, stride: Optional[IntOrPair] =
     kh, kw = force_pair(kernel_size)
     padding_h, padding_w = force_pair(padding)
     stride_h, stride_w = force_pair(stride)
-    
+
     x = pad2d(x, padding_w, padding_w, padding_h, padding_h, -t.inf)
-    
+
     b, ic, ih, iw = x.shape         # batch, in_channels, input_height, input_width
     oh = (ih - kh) // stride_h + 1  # output_height
     ow = (iw - kw) // stride_w + 1  # output_width
 
-    bs, ics, ihs, iws = x.stride()  # batch_stride, input_channel_stride, input_height_stride, input_width_stride
+    # batch_stride, input_channel_stride, input_height_stride, input_width_stride
+    bs, ics, ihs, iws = x.stride()
+
     x_strided = x.as_strided(
         size=(b, ic, oh, ow, kh, kw),
         stride=(bs, ics, ihs * stride_h, iws * stride_w, ihs, iws)
@@ -77,15 +83,17 @@ def conv2d(x, weights, stride: IntOrPair = 1, padding: IntOrPair = 0) -> t.Tenso
     '''
     padding_h, padding_w = force_pair(padding)
     stride_h, stride_w = force_pair(stride)
-    
+
     x = pad2d(x, padding_w, padding_w, padding_h, padding_h, 0)
-    
+
     b, ic, ih, iw = x.shape         # batch, in_channels, input_height, input_width
     oc, ic, kh, kw = weights.shape  # out_channels, in_channels, kernel_height, kernel_width
     oh = (ih - kh) // stride_h + 1  # output_height
     ow = (iw - kw) // stride_w + 1  # output_width
 
-    bs, ics, ihs, iws = x.stride()  # batch_stride, input_channel_stride, input_height_stride, input_width_stride
+    # batch_stride, input_channel_stride, input_height_stride, input_width_stride
+    bs, ics, ihs, iws = x.stride()
+
     x_strided = x.as_strided(
         size=(b, ic, oh, ow, kh, kw),
         stride=(bs, ics, ihs * stride_h, iws * stride_w, ihs, iws)
@@ -95,7 +103,11 @@ def conv2d(x, weights, stride: IntOrPair = 1, padding: IntOrPair = 0) -> t.Tenso
 
 
 class MaxPool2d(nn.Module):
-    def __init__(self, kernel_size: IntOrPair, stride: Optional[IntOrPair] = None, padding: IntOrPair = 0):
+    def __init__(self,
+            kernel_size: IntOrPair,
+            stride: Optional[IntOrPair] = None,
+            padding: IntOrPair = 0
+        ):
         super().__init__()
         self.kernel_size = kernel_size
         self.stride = stride
@@ -153,7 +165,7 @@ class Linear(nn.Module):
 
         weight = 2 *(t.rand((in_features, out_features)) - 0.5) / t.sqrt(t.tensor(in_features))
         self.weight = nn.Parameter(weight.T)  # transposing to pass asserts in test
-        
+
         if bias:
             bias = 2 *(t.rand(out_features) - 0.5) / t.sqrt(t.tensor(in_features))
             self.bias = nn.Parameter(bias)
@@ -168,16 +180,23 @@ class Linear(nn.Module):
         output = t.matmul(x, self.weight.T)
         if self.bias is not None:
             output += self.bias
-        
+
         return output
 
     def extra_repr(self) -> str:
-        return f"in_features={self.in_features}, out_features={self.out_features}, bias={True if self.bias is not None else False}"
+        return (
+            f"in_features={self.in_features}, out_features={self.out_features},"
+            f"bias={True if self.bias is not None else False}"
+        )
 
 
 class Conv2d(nn.Module):
-    def __init__(
-        self, in_channels: int, out_channels: int, kernel_size: IntOrPair, stride: IntOrPair = 1, padding: IntOrPair = 0
+    def __init__(self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: IntOrPair,
+        stride: IntOrPair = 1,
+        padding: IntOrPair = 0
     ):
         '''
         Same as torch.nn.Conv2d with bias=False.
