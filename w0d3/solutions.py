@@ -80,8 +80,8 @@ class BatchNorm2d(nn.Module):
             mean = t.mean(x, dim=(0, 2, 3), keepdim=True)
             var = t.var(x, dim=(0, 2, 3), unbiased=False, keepdim=True)
             # Updating running mean and variance, in line with PyTorch documentation
-            self.running_mean = (1 - self.momentum) * mean.squeeze() + self.momentum * self.running_mean
-            self.running_var = (1 - self.momentum) * var.squeeze() + self.momentum * self.running_var
+            self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * mean.squeeze()
+            self.running_var = (1 - self.momentum) * self.running_var + self.momentum * var.squeeze()
             self.num_batches_tracked += 1
         else:
             mean = rearrange(self.running_mean, "channels -> 1 channels 1 1")
@@ -226,7 +226,7 @@ def prepare_data(images: list[PIL.Image.Image]) -> t.Tensor:
     """
     Return: shape (batch=len(images), num_channels=3, height=224, width=224)
     """
-    x = t.stack([preprocess(img) for img in images], dim=0)  # type: ignore
+    x = t.stack([transform(img) for img in images], dim=0)  # type: ignore
     return x
 
 
