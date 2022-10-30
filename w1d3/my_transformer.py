@@ -151,6 +151,7 @@ class DecoderOnlyTransformer(nn.Module):
         x = self.token_embedding(x)
         x = self.positional_embedding(x)
         x = self.dropout(x)
+        x = self.decoder_blocks(x)
         x = self.final_ln(x)
         x = x @ self.token_embedding.weight.T
         return x
