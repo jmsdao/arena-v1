@@ -1,5 +1,7 @@
 # %%
 
+# ============================= IMPORTS =============================
+
 import os
 # This makes a certain kind of error message more legible
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
@@ -17,7 +19,6 @@ from dataclasses import dataclass
 from einops import rearrange, reduce, repeat
 from fancy_einsum import einsum
 from typing import Optional, Callable, Any, List, Dict, Union
-import torchtyping
 from tqdm.notebook import tqdm_notebook
 from IPython.display import display
 import matplotlib.pyplot as plt
@@ -27,6 +28,10 @@ device = t.device("cuda" if t.cuda.is_available() else "cpu")
 assert str(device) == "cuda"
 
 # %%
+
+
+
+# ============================= TRANSFORMER ARCHITECTURE =============================
 
 @dataclass(frozen=True)
 class TransformerConfig:
@@ -85,7 +90,7 @@ def multihead_masked_attention(Q, K, V, num_heads):
     k_idx = repeat(t.arange(seq_len), "seqK -> seqQ seqK", seqQ=seq_len)
     # Any index positions with q<k should be masked (this prevents tokens "reading info from the future")
     mask = (q_idx >= k_idx).to(device)
-    neg_inf = t.tensor(-1e4, dtype=attention_scores.dtype, device=device)
+    neg_inf = t.tensor(-1e6, dtype=attention_scores.dtype, device=device)
     attention_scores = t.where(mask, attention_scores, neg_inf)
 
     # Take softmax over the key dimension (i.e. each query index has a corresponding probability distribution over tokens in the sequence)
@@ -104,26 +109,26 @@ class MultiheadMaskedAttention(nn.Module):
     W_QKV: nn.Linear
     W_O: nn.Linear
 
-    def __init__(self, embedding_dim: int, num_heads: int, head_size: Optional[int] = None):
+    def __init__(self, hidden_size: int, num_heads: int, head_size: Optional[int] = None):
         """
-        Adding option to override head_size (defaults to embedding_dim / num_heads otherwise)
+        Adding option to override head_size (defaults to hidden_size / num_heads otherwise)
         """
         super().__init__()
-        self.embedding_dim = embedding_dim
-        assert embedding_dim % num_heads == 0
+        self.hidden_size = hidden_size
+        assert hidden_size % num_heads == 0
         self.num_heads = num_heads
-        self.head_size = embedding_dim // num_heads if head_size is None else head_size
+        self.head_size = hidden_size // num_heads if head_size is None else head_size
         
         # Note that these weight matrices are usually called projections and defined as linear layers without bias, but they are 
         # still implemented with bias in some papers.
-        self.W_QKV = nn.Linear(embedding_dim, 3*num_heads*self.head_size)
-        self.W_O = nn.Linear(num_heads*self.head_size, embedding_dim)
+        self.W_QKV = nn.Linear(hidden_size, 3*num_heads*self.head_size)
+        self.W_O = nn.Linear(num_heads*self.head_size, hidden_size)
 
     def forward(self, x: t.Tensor) -> t.Tensor:
         """
-        x: shape (batch, seq, embedding_dim)
+        x: shape (batch, seq, hidden_size)
 
-        Return: shape (batch, seq, embedding_dim)
+        Return: shape (batch, seq, hidden_size)
         """
         # Computationally faster to apply W_QKV on x before splitting
         QKV = self.W_QKV(x)
@@ -202,53 +207,60 @@ class DecoderOnlyTransformer(nn.Module):
         return x
 # %%
 
+
+
+# ============================= REVERSED SEQUENCES =============================
+
 class ReverseDataset(Dataset):
-    def __init__(self, ndigit):
-        self.seq_len = ndigit
-        self.vocab_size = 10
-        self.size = 10 ** self.seq_len
+    def __init__(self, seq_len):
+        self.seq_len = seq_len
+        self.vocab_size = 10 # digits from 0 to 9 inclusive
+        self.size = 10 ** seq_len # so that each seq appears once in the dataset (in expectation)
 
     def __len__(self):
+        # This is what is returned when you call len(dataset)
+        # And it's what PyTorch uses to construct the dataset when initialised
         return self.size
 
     def __getitem__(self, idx):
-        x = t.randint(self.vocab_size, size=(self.seq_len,), dtype=t.long)
-        y = x.flip(-1)
-        return x, y
+        # Rather than randomising, could also generate every single sequence
+        seq = t.randint(self.vocab_size, size=(self.seq_len,), dtype=t.long)
+        seq_reversed = seq.flip(-1)
+        return seq, seq_reversed
 
-# create a dataset for 6-digit sequence reversals
-ndigit = 6
-train_dataset = ReverseDataset(ndigit=ndigit)
+# Create dataset for training
+seq_len = 6
+trainset = ReverseDataset(seq_len=seq_len)
 
 # %%
 batch_size = 1024
-train_loader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size)
+trainloader = DataLoader(trainset, shuffle=True, batch_size=batch_size)
 
 # %%
 config = TransformerConfig(
     num_layers = 2,
     num_heads = 6,
-    vocab_size = train_dataset.vocab_size,
+    vocab_size = trainset.vocab_size,
     hidden_size = 96,
-    max_seq_len = train_dataset.seq_len,
+    max_seq_len = trainset.seq_len,
 )
 
 model = DecoderOnlyTransformer(config).to(device).train()
 loss_fn = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=6e-4)
+optimizer = optim.Adam(model.parameters(), lr=1e-3)
 epochs = 2
 
 # %%
 
-def train(model, optimizer, loss_fn, train_loader, epochs, plot_loss=True):
+def train(model, optimizer, loss_fn, trainloader, epochs, dataset_name=None, plot_loss=True):
 
     loss_list = []
 
     for epoch in range(epochs):
         
-        progress_bar = tqdm_notebook(train_loader)
+        progress_bar = tqdm_notebook(trainloader)
         
-        for it, (x, y) in enumerate(progress_bar):
+        for (x, y) in progress_bar:
             x = x.to(device)
             y = y.to(device)
 
@@ -275,7 +287,7 @@ def train(model, optimizer, loss_fn, train_loader, epochs, plot_loss=True):
                 "x": "No. batches seen", 
                 "y": str(loss_fn).replace("()", "") # This gets a name like "CrossEntropyLoss" from the loss function
             }, 
-            title="Loss on ReversedDigits dataset"
+            title=f"Training loss on {dataset_name} dataset" if dataset_name is not None else "Training loss"
         )
         # This next bit of code plots vertical lines corresponding to the epochs
         if epochs > 1:
@@ -286,20 +298,29 @@ def train(model, optimizer, loss_fn, train_loader, epochs, plot_loss=True):
     return model
 # %%
 
-model = train(model, optimizer, loss_fn, train_loader, epochs)
+model = train(model, optimizer, loss_fn, trainloader, epochs, "ReversedDigits")
 # With this model and parameters, I found loss dropping to about 1.17 after second epoch
 
 # %%
 
 model.eval()
-x = t.tensor([[1, 2, 3, 4, 5, 6]]).to(device)
-logits = model(x)
-print("prediction:", logits.argmax(dim=-1))
-print("answer:", x.flip(-1))
+seq = t.randint(10, size=(6,), dtype=t.long, device=device)
+seq_reversed = seq.flip(-1)
+logits = model(seq)
+prediction = logits.argmax(dim=-1).squeeze()
+print("prediction:", prediction)
+print("answer:", seq_reversed)
+t.testing.assert_close(seq_reversed[-3:], prediction[-3:])
 # As expected, model is getting the first three digits wrong, but the last three incorrect (so attention masking is working)
 
 # %%
 
+
+
+
+# ============================= SHAKESPEARE =============================
+
+# Load the text data
 with open("100-0.txt", encoding="utf-8") as file:
     text = file.read()
     words = re.split(r"\b", text)
@@ -327,54 +348,64 @@ class WordsDataset(Dataset):
         return int(self.max_len * self.fraction)
 
     def __getitem__(self, idx):
+        # Given tokens (t_1, ..., t_n), we want to predict (t_2, ..., t_n+1)
+        # This is actually n separate instances of task "predict j+1th token from first j tokens", for 1<=j<=n
         x_and_y = self.tokens[idx: idx + self.seq_len + 1]
         x = x_and_y[:-1]
         y = x_and_y[1:]
         return x, y
 
 max_seq_len = 48
-train_dataset = WordsDataset(words=words, seq_len=max_seq_len, fraction=0.02)
+trainset = WordsDataset(words=words, seq_len=max_seq_len, fraction=0.02)
 
 batch_size = 32
+trainloader = DataLoader(trainset, shuffle=True, pin_memory=True, batch_size=batch_size)
 
-train_loader = DataLoader(train_dataset, shuffle=True, pin_memory=True, batch_size=batch_size)
-
-# Create a tokenizer, so I can do things like tokenizer(string_list) and tokenizer.decode(id_list)
-# This is optional though, you could just use `self.words_to_token_idx` directly from dataset
+# Create a tokenizer, so I can do things like tokenizer.encode(initial_text) and tokenizer.decode(list_of_ids)
+# Also using the `return_tensors` argument of the encode method, just like gpt's tokenizer does
+# This object is optional though, you could just use `self.words_to_token_idx` directly from dataset
 class WordsTokenizer():
     def __init__(self, wordsdataset: WordsDataset):
         self.words_to_token_idx = wordsdataset.words_to_token_idx
         self.token_idx_to_words = wordsdataset.token_idx_to_words
 
-    def __call__(self, initial_text: str) -> t.Tensor:
+    def encode(self, initial_text: str, return_tensors: Optional[str] = None) -> Union[list, np.ndarray, t.Tensor]:
         list_of_strings = [s for s in re.split(r"\b", initial_text) if len(s) > 0]
-        return t.tensor([self.words_to_token_idx[s] for s in list_of_strings]).to(device, t.long)
+        tensors_list = [self.words_to_token_idx[s] for s in list_of_strings]
+        if return_tensors is None:
+            return tensors_list
+        elif return_tensors == "pt":
+            return t.tensor(tensors_list)
+        elif return_tensors == "np":
+            return np.array(tensors_list)
+        else:
+            raise Exception("Unexpected value for `return_tensors`.")
 
     def decode(self, list_of_ids: Union[t.Tensor, list]) -> str:
         return ''.join([self.token_idx_to_words[int(token)] for token in list_of_ids])
 
-tokenizer = WordsTokenizer(train_dataset)
+tokenizer = WordsTokenizer(trainset)
 
 # %%
 config = TransformerConfig(
     num_layers = 8,
     num_heads = 8,
-    vocab_size = train_dataset.vocab_size,
+    vocab_size = trainset.vocab_size,
     hidden_size = 512,
-    max_seq_len = train_dataset.seq_len,
+    max_seq_len = trainset.seq_len,
     dropout = 0.1,
     layer_norm_epsilon = 1e-05
 )
 
 model = DecoderOnlyTransformer(config).to(device).train()
 loss_fn = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=6e-4)
+optimizer = optim.Adam(model.parameters(), lr=1e-3)
 epochs = 1
 
 # %%
 
-model = train(model, optimizer, loss_fn, train_loader, epochs)
-# With this model and parameters, I had loss down to about 2.5 by the end of the epoch
+model = train(model, optimizer, loss_fn, trainloader, epochs, "WordsDataset")
+# With this model and parameters, I had loss down to about 1.7 by the end of one epoch
 
 # %%
 
@@ -413,7 +444,7 @@ def sample_tokens(
     tokenizer: WordsTokenizer,
     initial_text: str,
     max_tokens_generated=30,
-    **kwargs
+    **kwargs # kwargs are for params like temperature, top_k, etc
 ) -> str:
     '''
     Sample tokens until the model outputs `tokenizer.eos_token_id` or the specified token limit is reached.
@@ -422,7 +453,7 @@ def sample_tokens(
     '''
     # Note - an alternative to model.eval() is to use the @t.inference_mode() decorator for this whole function.
     model.eval()
-    input_ids: list = list(tokenizer(initial_text))
+    input_ids: list = tokenizer.encode(initial_text) # type: ignore
     generated = []
     for _ in range(max_tokens_generated):
         new_input_ids = t.tensor(input_ids + generated, dtype=t.long, device=device)
@@ -430,6 +461,8 @@ def sample_tokens(
         logits = model(new_input_ids_window)[0, -1]
         new_token = apply_sampling_methods(new_input_ids, logits, **kwargs)
         generated.append(new_token)
+        if new_token == getattr(tokenizer, "eos_token_id", None):
+            break
     return tokenizer.decode(input_ids + generated)
 
 # Note, some initial text strings might not work because they weren't present in the text you used for training
