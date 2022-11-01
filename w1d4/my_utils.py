@@ -42,16 +42,15 @@ def sample_tokens(
     Return: the prompt and continuation concatenated
     '''
     model.eval()
-    input_ids: list = tokenizer(initial_text).input_ids
+    input_ids = tokenizer.encode(initial_text)
     generated = []
     device = next(model.parameters()).device
     for _ in range(max_tokens_generated):
         new_input_ids = t.tensor(input_ids + generated, dtype=t.int64, device=device)
-        logits = model(new_input_ids.unsqueeze(0)).logits[0, -1]
+        logits = model(new_input_ids.unsqueeze(0))[0, -1]
         new_token = apply_sampling_methods(new_input_ids, logits, **kwargs)
         generated.append(new_token)
-        if new_token == tokenizer.eos_token_id:
-            break
+
     return tokenizer.decode(input_ids + generated)
 
 
