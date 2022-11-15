@@ -1,3 +1,4 @@
+# %%
 import torch as t
 from typing import Union, Optional
 from torch import nn
@@ -6,7 +7,6 @@ from einops.layers.torch import Rearrange
 import os
 import torchinfo
 from collections import OrderedDict
-import numpy as np
 from tqdm import tqdm
 from torchvision import transforms
 from torch.utils.data import DataLoader
@@ -19,6 +19,8 @@ assert str(device) == "cuda:0"
 
 import w0d2_solutions
 import w0d3_solutions
+
+MAIN = (__name__ == "__main__")
 
 # %%
 
@@ -352,8 +354,11 @@ celeba_mini_config = dict(
     n_layers = 4,
 )
 
-netG = Generator(**celeba_mini_config).to(device).train()
-netD = Discriminator(**celeba_mini_config).to(device).train()
+netG_celeb_mini = Generator(**celeba_mini_config).to(device).train()
+netD_celeb_mini = Discriminator(**celeba_mini_config).to(device).train()
+
+netG_celeb = Generator(**celeba_config).to(device).train()
+netD_celeb = Discriminator(**celeba_config).to(device).train()
 
 def initialize_weights(model) -> None:
     for name, param in model.named_parameters():
@@ -364,10 +369,9 @@ def initialize_weights(model) -> None:
         elif "bias" in name and "batchnorm" in name:
             nn.init.constant_(param.data, 0.0)
 
-initialize_weights(netG)
-initialize_weights(netD)
-
-utils.display_generator_output(netG)
+if MAIN:
+    initialize_weights(netG_celeb)
+    utils.display_generator_output(netG_celeb, netG_celeb.latent_dim_size)
 
 # %%
 
@@ -382,6 +386,8 @@ utils.display_generator_output(netG)
 
 # %%
 
+# ======================== CELEB_A ========================
+
 image_size = 64
 batch_size = 8
 
@@ -395,7 +401,7 @@ transform = transforms.Compose([
 ])
 
 trainset = datasets.ImageFolder(
-    root="data",
+    root=r"C:\Users\calsm\Documents\AI Alignment\ARENA\in_progress\transposed_convolutions\data",
     transform=transform
 )
 
@@ -405,6 +411,8 @@ import utils
 import importlib
 importlib.reload(utils)
 utils.show_images(trainset, rows=3, cols=5)
+
+# ======================== MNIST ========================
 
 # batch_size = 64
 # img_size = 24
@@ -473,7 +481,7 @@ def train_generator_discriminator(
             img_fake = netG(noise)
             D_G_z = netD(img_fake.detach())
             # Add them to get the objective function
-            lossD = t.log(D_x).mean() + t.log(1 - D_G_z).mean()
+            lossD = - (t.log(D_x).mean() + t.log(1 - D_G_z).mean())
             # Gradient descent step
             lossD.backward()
             optD.step()
@@ -484,7 +492,7 @@ def train_generator_discriminator(
             optG.zero_grad()
             # Calculate the objective function
             D_G_z = netD(img_fake)
-            lossG = t.log(D_G_z).mean()
+            lossG = - (t.log(D_G_z).mean())
             # Gradient descent step
             lossG.backward()
             optG.step()
@@ -537,24 +545,12 @@ initialize_weights(netD)
 
 lr = 0.0002
 betas = (0.5, 0.999)
-optG = t.optim.Adam(netG.parameters(), lr=lr, betas=betas, maximize=True)
-optD = t.optim.Adam(netD.parameters(), lr=lr, betas=betas, maximize=True)
+optG = t.optim.Adam(netG.parameters(), lr=lr, betas=betas)
+optD = t.optim.Adam(netD.parameters(), lr=lr, betas=betas)
 
 epochs = 3
 max_epoch_duration = 120
 print_netG_output_interval = 20
-
-# %%
-
-
-# trainset = datasets.ImageFolder(
-#     root="data",
-#     transform=transform
-# )
-
-# batch_size = 4
-
-# trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
 
 # %%
 
