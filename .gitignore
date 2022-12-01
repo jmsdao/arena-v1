@@ -1,4 +1,6 @@
-*__pycache__
-*.ipynb_checkpoints
+*__pycache__/
+*exercises.py
+
+*.ipynb_checkpoints/
 w0d3/data/
 w0d3/w1d2_convnet_mnist.pt
